@@ -1,0 +1,719 @@
+---
+title: "Stat154_Quiz3"
+author: "Samba Njie Jr"
+date: "October 16, 2016"
+output: pdf_document
+---
+
+##Housing Valies in Suburbs of Boston
+
+
+**Dataset Description:** `housing.csv` concerns housing values in suburbs of Boston. The dataset was created by Harrison, D. and Rubinfeld, D.L. and analyzed in *'Hedonic prices and the demand for clean air', J. Environment Economics and Management, vol. 5, 81 - 102, 1978*. There are 506 observaitons and 12 continuous attributes including the response variable `MEDV`.
+
+###Attribute Information:
+
+  + `CRIM`: per capita crime rate by town
+  
+  + `ZN`: proportion of residential land zoned for lots over 25,000 sq. ft.
+  
+  + `INDUS`: proportion of non-retail business acres per town
+  
+  + `CHAS`: Charles River dummy variable ( = 1 if tract bounds river; 0 otherwise)
+  
+  + `NOX`: nitric oxides concentration (parts per 10 million)
+  
+  + `RM`: average number of rooms per dwelling
+  
+  + `AGE`: proportion of owner-occupied units built prior to 1940
+  
+  + `DIS`: weighted distances to five Boston employment centres
+  
+  + `RAD`: index of accessibility to radial highways
+  
+  + `TAX`: full-value property-tax rate per $10,000
+  
+  + `PTRATIO`: pupil-teacher ratio by town
+  
+  + `LSTAT`: % lower status of the population
+  
+  + `MEDV`: Median value of owner-occupied homes in $1000's.
+  
+###Tasks:
+
+1. Create randomly sampled training and test sets from the dataset using 90% of the observations for training and 10% for testing. Put aside your test set and only use it for the last task.
+
+First, we load the libraries:
+```{r,message = FALSE}
+library(ISLR)
+library(MASS)
+library(dplyr)
+library(utils)
+library(corrplot)
+library(glmnet)
+```
+
+Read in the `housing.csv` data set:
+```{r}
+dataset <- read.csv(file = "/Users/sambamamba/Documents/154_files/housing.csv")
+head(dataset) #inspect the columns and rows in the beginning
+```
+
+Now let us set up randomly sampled training and test sets, 90% training, 10% testing.
+
+```{r}
+set.seed(1)
+n_obs = nrow(dataset) #number of observations
+n_features = ncol(dataset) #number of features
+
+prop_training = round(0.90*n_obs) #subset of observations composing the training set
+prop_test = round(0.10*n_obs) #subset of observations for test set
+
+training_index = sample(n_obs, prop_training) #samples integers from 1 to n_obs
+
+test_index = dataset$X[-training_index]
+
+
+train_set <- dataset %>%
+  subset(X %in% training_index)
+
+test_set <- dataset %>%
+  subset(!(X %in% training_index))
+```
+
+
+2. Plot the correlation matrix of all attributes. Which attributes you deem more predictive of the housing prices?
+
+```{r, echo = FALSE}
+corr_variables <- cor(dataset) #matrix of correlation of all variables
+corr_matrix <- corrplot(corr_variables)
+corr_matrix
+```
+
+Based on the correlation matrix visualized by calling `corr_matrix`, we can notice that matrix entries with darker shades of blue and red are heavily correlated with one another. The correlation coefficients are displayed in a matrix under the `corr_variables` object, and `corr_matrix` graphically displays these correlations, with the size and color glyphs representing the strength of the correlation. with the housing prices variable, `MEDV` being predicted, we can then infer that those glyphs or attributes that have the largest circles describe features that have the strongest correlation coefficients with the housing prices variable `MEDV`, with a strong blue color indicating positive correlation and a strong negative color indicating negative correlation.
+
+From the data visualization we generated from the `corrplot()` function, we can presume that `LSTAT` and `INDUS` variables have strong negative correlations with `MEDV`, while `RM` and `ZN` have strong positive correlations. With these presumptions, we can withness if they hold true:
+
+```{r}
+head(corr_matrix[14,])
+  
+```
+Quantitatively, `LSTAT` and `PTRATIO` have the highest negative correlations, -0.737 and -0.508 respectively, and `RM` and `TAX` seem to have someof the highest positive correlations. 
+
+So for our hypotheses, we suppose that `RM` and `LSTAT` are most predictive of housing prices.
+
+
+3. Implement Algorithm 6.1 and report the best model under $C_{p}$, BIC, adjusted $R^{2}$ and Cross-Validation (k-fold, k of your choice).
+
+Algorithm 6.1 in the textbook is *best subset selection*, a subset selection method which will allow us to pick the best model to describe the data. Best subset selection fits a model for each possible combination of $p$ predictors. The algorithm is as follows:
+
+  (a) Let $M_{0}$ denote the *null model*, which contains no predictors. This model simply predicts the sample mean for each observation.
+  
+  (b) For $k = 1, 2, ..., p$:
+  
+    i. Fit all $\binom{p}{k}$ models that contain exactly $k$ predictors.
+    
+    ii. Pick the best among these $\binom{p}{k}$ models, and call it $M_{k}$. Here the *best* is defined as having the smallest RSS, or equivalently largest $R^{2}$.
+    
+  (c) Select a single best model from among $M_{0}, ... , M_{p}$ using cross-validation, $C_{p}$, AIC, BIC, or adjusted $R^{2}$.
+
+
+Now for the implementation:
+
+(a)
+```{r}
+sum(is.na(dataset)) #determines number of NA values. Since 0, nothing to omit.
+
+response <- train_set$MEDV
+
+M_0 <- mean(response) #null model, 0 predictors, and the RSS is simply the mean of the response variables from 1 to 506 observations
+M_0
+```
+
+
+
+(b)
+```{r}
+subsets <- function(p) { # finds the number of possible subsets of any sized set
+  # p = ncol(data)
+  stopifnot(is.numeric(p))
+  total <- list()
+  
+  
+  for (i in 1:p) {
+    sets <- combn(p, i)
+    total[[i]] <- sets
+  }
+  return(total)
+}
+```
+
+Now we use the helper function subsets to index all the possible types of combinations of predictors, which is mathematically defined as the power set of a set of values, and fit each combination to a model. Hence we define `power_set`, a function that inputs a data frame and outputs a list of list of data frames labeled `sets`: each sublist is the $M_k$ set of models.
+
+```{r, eval = FALSE}
+power_set <- function(data, response_var) {
+  
+  # generates a list for each element M_k, where each element is the subset with the highest R-squared value
+  
+  sets <- list() 
+  each_subset <- list()
+  new_vec <- data.frame(rep(NA, nrow(data)))
+  p <- ncol(data)
+  
+  powers <- subsets(p)
+  
+  for (i in 1:length(powers)) {
+    for (j in 1:ncol(powers[[i]]) ) {
+      each_rss <- rep(NA, ncol(powers[[i]]))
+      
+      for (k in 1:length(powers[[i]][,j]) ) {
+        t = powers[[i]][k, j]
+        vec <- data.frame(data[t])
+        new_vec <- cbind(new_vec, vec) # generates a data frame of each subset within M_k
+      }
+      new_vec <- new_vec[-1] # eliminates NA list
+      new_dta <- cbind(response_var, new_vec) # data frame of subset and the response 
+      models <- suppressWarnings(summary(lm(response_var ~ ., data = new_dta))[["r.squared"]][[1]]) 
+      # gets R-squared value of each subset within M_k fit to a linear model
+      each_rss[j] <- models # creates a list of j lists for each R-squared of each k model
+      each_subset[[j]] <- new_vec
+    }
+    max_subset_rss <- which.max(each_rss)
+    sets[[i]] <- each_subset[[max_subset_rss]] 
+  }
+  sets <- na.omit(sets)
+  return(sets) 
+}
+
+### power_set accomplishes what power_rss aspires to accomplish --> place power_rss in an old repo later ###
+
+power_rss <- function(data, response_var) {
+  #create empty lists sets and each_subset, which provides the RSS of every model of every list of lists.
+  sets <- list() 
+  each_subset <- list()
+  new_vec <- data.frame(rep(NA, nrow(data)))
+  p <- ncol(data)
+  
+  
+  
+  powers <- subsets(p)
+  
+  for (i in 1:length(powers)) {
+    for (j in 1:ncol(powers[[i]]) ) {
+      for (k in 1:length(powers[[i]][,j]) ) {
+        t = powers[[i]][k, j]
+        vec <- data.frame(data[t])
+        new_vec <- cbind(new_vec, vec)
+      }
+      new_vec <- new_vec[-1] #eliminates NA list
+      new_vec <- cbind(response_var, new_vec)
+      models <- summary(lm(response_var ~ ., data = new_vec))[[6]]
+      each_subset[[j]] <- models #creates a list of j lists for each k model
+    }
+    sets[[i]] <- each_subset 
+  }
+  sets <- na.omit(sets)
+  return(sets) 
+}
+
+best_rss <- function(predictor_space, response) {
+  bss <- power_rss(predictor_space, response)
+  min_rss <- list()
+  
+  for (i in 1:length(bss)) {
+    bss_vec <- rep(NA, length(bss[i]))
+    for (j in 1:length(bss[i])) { #turns every element of the power set to be a vector
+      bss_vec[j] <- as.numeric(bss[[i]][j]) 
+    }
+    min_rss <- min(bss_vec)
+  }
+  return(min_rss)
+}
+
+
+index <- function(vec, value) {#indexes a set
+  for (i in 1:length(vec)) {
+    if (value == vec[i]) {
+      yes <- i 
+    }
+  }
+  return(yes)
+}
+
+idx_best <- function(predictor_space, response) {#list of indices of each M_k with each value being the index of the subset with the smallest RSS
+  idx <- list()
+  p <- ncol(predictor_space)
+  brss <- best_rss(predictor_space, response)
+  bss <- power_rss(predictor_space, response)
+  
+  
+  for (i in i:length(bss)) {
+    bss_vec <- rep(NA, length(bss[i]))
+    for (j in 1:length(bss[i])) { #turns every element of the power set to be a vector
+      bss_vec <- bss[[i]][j] 
+    }
+    M_vecs[[i]] <- bss_vec
+    idx[[i]] <- index(M_vecs[[i]], brss[[i]]) 
+  }
+  return(idx)
+}
+
+
+
+
+
+
+
+
+```
+
+
+Now to split the training set into the predictor space and response:
+```{r}
+p_space <- train_set[,1:13] #data frame of the predictor space (excluding MEDV response)
+response <- train_set$MEDV #vector of response variable MEDV
+
+model <- train_set[1:13] #select the first 13 predictors because this provides us with the highest R-squared via our R-squared assessment above
+d = ncol(model)
+```
+
+```{r, eval = FALSE}
+M_models <- power_set(p_space, response) #stores M_1,...,M_p sets of models
+```
+
+
+Other helper functions to calculate variance:
+```{r, eval = FALSE}
+power_var <- function(data, response_var) {
+  #create empty lists sets and each_subset, which provides the RSS of every model of every list of lists.
+  sets <- list() 
+  each_subset <- list()
+  new_vec <- data.frame(rep(NA, nrow(data)))
+  p <- ncol(data)
+  
+  
+  
+  powers <- subsets(p)
+  
+  for (i in 1:length(powers)) {
+    for (j in 1:ncol(powers[[i]]) ) {
+      for (k in 1:length(powers[[i]][,j]) ) {
+        t = powers[[i]][k, j]
+        vec <- data.frame(data[t])
+        new_vec <- cbind(new_vec, vec)
+      }
+      new_vec <- new_vec[-1] #eliminates NA list
+      new_vec <- cbind(response_var, new_vec)
+      models <- (summary(lm(response_var ~ ., data = new_vec))$sigma)**2
+      each_subset[[j]] <- models #creates a list of j lists for each k model
+    }
+    sets[[i]] <- each_subset 
+  }
+  sets <- na.omit(sets)
+  return(sets) 
+}
+```
+
+Mallow's Cp, AIC, BIC, Adjustred R-squared, and CV statistics:
+```{r, eval = FALSE}
+#Mallow's Cp
+Cp <- function(train, response) {
+  Cp_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    Cp_est[i] <- (power_rss(train, response)[[i]] + 2*ncol(train)*(var_i)/nrow(train))
+  }
+  return(Cp_est)
+}
+
+
+#AIC
+AIC <- function(train, response) {
+  AIC_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    AIC_est[i] <- (RSS_fwd(train, response)[[i]] + 2*ncol(train)*(var_i)/(nrow(train) *var_i ))
+  }
+  return(AIC_est)
+}
+
+
+
+#BIC
+BIC <- function(train, response) {
+  BIC_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  n <- nrow(train)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    BIC_est[i] <- (RSS_fwd(train, response)[[i]] + 2*(log(n))*ncol(train)*(var_i)/n)
+  }
+  return(BIC_est)
+}
+
+#Adjusted R-squared
+adjR <- function(predictor_space, response_var) {#helper function that creates a list of M_k subsets for each step of the forward stepwise regression algorithm
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  index_adj <- index_fwd(predictor_space, response_var)
+  adj <- rep(NA, ncol(predictor_space))
+  
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    rsq <- apply(M_set, 2, function(x) summary(lm(response_var ~ x))$adj.r.squared)
+names(d)[which.max(rsq)]
+    idx_adj <- index_adj[[k]]
+    
+    fwd_list[[k]] <- rsq[[idx_adj]]
+  }
+  for (j in 1:length(fwd_list)) {
+    adj[j] <- fwd_list[[j]]
+  }
+  return(adj)
+}
+
+#k-fold Cross-Validation
+kfold <- function(predictor_space, response, k) {
+  p = ncol(predictor_space)
+  folds <- cut(seq(1,nrow(predictor_space)),breaks=k,labels=FALSE)
+  MSE <- list()
+  
+  for (i in 1:k) {
+    idx_test <- which(folds==i,arr.ind=TRUE)
+    val_set <- predictor_space[idx_test, ]
+    trained_set <- predictor_space[-idx_test, ]
+    y_val <- response[-idx_test]
+    
+    lm_new <- lm(y_val ~ ., data = trained_set)
+    pred <- predict(lm_new, newData = val_set )
+    MSE <- mean((y_val - pred)^2)
+  }
+  return(MSE)
+}
+
+cv_fwd <- function(predictor_space, response_var, folds) {#helper function that creates a list of M_k subsets for each step of the forward stepwise regression algorithm
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  cv <- rep(NA, length(predictor_space))
+
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    fwd_list[[k]] <- kfold(M_set, response_var, folds)
+  }
+  for (j in 1:length(fwd_list)) {
+    cv[j] <- fwd_list[[j]]
+    if (cv[j] == 0) {
+      cv[j] <- NA
+    }
+  }
+  return(cv)
+}
+```
+
+
+
+
+
+4. Implement Algorithm 6.2 and report the best model under $C_{p}$, BIC, adjusted $R^{2}$ and Cross-Validation (k-fold, k of your choice).
+
+Algorithm 5.2 is the *forward stepwise selection* algorithm, which is a more computationally efficient model selection/subset selection method as opposed to best subset selection. The algorithm is as follows:
+
+  (a) Let $M_{0}$ denote the *null* model, which contains no predictors
+  
+  (b) For $k = 0, ..., p - 1$:
+    
+    i. Consider all $p - k$ models that augment the predictors in $M_{k}$ with one additional predictor
+    
+    ii. Choose the best among these $p - k$ models, and call it $M_{k + 1}$. Here *best* is defined as having smallest RSS or highest $R^{2}$.
+    
+  (c) Select a single best model from among $M_{0}, ..., M_{p}$ using cross-validated prediction error,  $C_{p}$, AIC, BIC, or adjusted $R^{2}$.
+  
+  
+
+(a)
+```{r}
+M_0 <- mean(response) #null model, 0 predictors, and the RSS is simply the mean of the response variables from 1 to 506 observations
+```
+
+(b)
+```{r, warning = FALSE, message = FALSE}
+
+
+index <- function(vec, value) {#indexes a set
+  for (i in 1:length(vec)) {
+    if (value == vec[i]) {
+      yes <- i 
+    }
+  }
+  return(yes)
+}
+
+fwd <- function(predictor_space, response_var) {#helper function that creates a list of M_k subsets for each step of the forward stepwise regression algorithm
+  p = ncol(predictor_space)
+  fwd_list <- list()
+
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    rsq <- apply(M_set, 2, function(x) summary(lm(response_var ~ x))$r.squared)
+names(d)[which.max(rsq)]
+    fwd_list[[k]] <- max(rsq[1:k])
+  }
+  return(fwd_list)
+}
+
+
+index_fwd <- function(predictor_space, response_var) {
+  p = ncol(predictor_space)
+ 
+  idx <- list()
+  max_rsq <- fwd(predictor_space, response_var)
+  
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    rsq <- apply(M_set, 2, function(x) summary(lm(response_var ~ x))$r.squared)
+names(d)[which.max(rsq)]
+    
+    idx[[k]] <- index(rsq, max_rsq[[k]])
+  }
+  return(idx)
+}
+
+fwd(p_space, response)
+index_fwd(p_space, response)
+
+
+
+```
+
+So M_13 gives the highest R-squared of all the subsets. We then find the best model within these 13 predictors:
+
+(c)
+```{r, warning = FALSE, message= FALSE}
+model <- train_set[1:13] #select the first 13 predictors because this provides us with the highest R-squared via our R-squared assessment above
+model_RSS <- summary(fwd(p_space, train_set$MEDV)[[13]])[[6]]
+d = ncol(model)
+
+
+#calculate variance
+var_fwd <- function(predictor_space, response_var) {#calculates variance
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  
+  
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    varfwd <- apply(M_set, 2, function(x) (summary(lm(response_var ~ x))$sigma)**2)
+names(M_set)[which.max(varfwd)]
+    fwd_list[[k]] <- varfwd[1:k]
+  }
+  return(fwd_list)
+}
+
+#calculate min RSS for each subset
+RSS_fwd <- function(predictor_space, response_var) {#calculates variance
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  
+  
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    RSSfwd <- apply(M_set, 2, function(x) (summary(lm(response_var ~ x))[[6]]))
+names(M_set)[which.max(RSSfwd)]
+    fwd_list[[k]] <- min(RSSfwd[1:k])
+    
+  }
+  return(fwd_list)
+}
+
+```
+Thus, the 13th model within the 13th subset proves to be the one with the lowest Cp
+
+```{r, warning= FALSE, message = FALSE}
+#Mallow's Cp
+Cp <- function(train, response) {
+  Cp_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    Cp_est[i] <- (RSS_fwd(train, response)[[i]] + 2*ncol(train)*(var_i)/nrow(train))
+  }
+  return(Cp_est)
+}
+
+
+#AIC
+AIC <- function(train, response) {
+  AIC_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    AIC_est[i] <- (RSS_fwd(train, response)[[i]] + 2*ncol(train)*(var_i)/(nrow(train) *var_i ))
+  }
+  AIC_est
+}
+
+
+
+#BIC
+BIC <- function(train, response) {
+  BIC_est <- rep(NA, ncol(train))
+  varf <- var_fwd(train, response)
+  n <- nrow(train)
+  for (i in 1:ncol(train)) {
+    rsq_idx <- index_fwd(train, response)[[i]]
+    var_i <- as.numeric(var_fwd(train, response)[[i]][rsq_idx])
+    BIC_est[i] <- (RSS_fwd(train, response)[[i]] + 2*(log(n))*ncol(train)*(var_i)/n)
+  }
+  BIC_est
+}
+
+#Adjusted R-squared
+adjR <- function(predictor_space, response_var) {#helper function that creates a list of M_k subsets for each step of the forward stepwise regression algorithm
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  index_adj <- index_fwd(predictor_space, response_var)
+  adj <- rep(NA, ncol(predictor_space))
+  
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    rsq <- apply(M_set, 2, function(x) summary(lm(response_var ~ x))$adj.r.squared)
+names(d)[which.max(rsq)]
+    idx_adj <- index_adj[[k]]
+    
+    fwd_list[[k]] <- rsq[[idx_adj]]
+  }
+  for (j in 1:length(fwd_list)) {
+    adj[j] <- fwd_list[[j]]
+  }
+  adj
+}
+
+#k-fold Cross-Validation
+kfold <- function(predictor_space, response, k) {
+  p = ncol(predictor_space)
+  folds <- cut(seq(1,nrow(predictor_space)),breaks=k,labels=FALSE)
+  MSE <- list()
+  
+  for (i in 1:k) {
+    idx_test <- which(folds==i,arr.ind=TRUE)
+    val_set <- predictor_space[idx_test, ]
+    trained_set <- predictor_space[-idx_test, ]
+    y_val <- response[-idx_test]
+    
+    lm_new <- lm(y_val ~ ., data = trained_set)
+    pred <- predict(lm_new, newData = val_set )
+    MSE <- mean((y_val - pred)^2)
+  }
+  MSE
+}
+
+cv_fwd <- function(predictor_space, response_var, folds) {#helper function that creates a list of M_k subsets for each step of the forward stepwise regression algorithm
+  p = ncol(predictor_space)
+  fwd_list <- list()
+  cv <- rep(NA, length(predictor_space))
+
+  for (k in 1:p) {
+    M_set <- data.frame(predictor_space[1:k], response_var)
+    fwd_list[[k]] <- kfold(M_set, response_var, folds)
+  }
+  for (j in 1:length(fwd_list)) {
+    cv[j] <- fwd_list[[j]]
+    if (cv[j] == 0) {
+      cv[j] <- NA
+    }
+  }
+  cv
+}
+
+
+```
+
+
+```{r}
+c <- Cp(model, response)
+min(c)
+index(c, min(c))
+
+
+aic <- AIC(model, response)
+min(aic)
+index(aic, min(aic))
+
+bic <- BIC(model, response)
+na.omit(bic)
+min(bic)
+index(bic, min(bic))
+
+adj <- adjR(model, response)
+max(adj)
+index(adj, max(adj))
+
+cv <- cv_fwd(model, response, 5) #5-fold CV
+cv
+
+
+
+```
+According to our AIC, BIC, and Adjusted-R-squared estimates, the 13th set has the best model, so we consider the linear model of all 13 predictors to be the best fit. CV states that the 11th model is the most accurate:
+
+```{r}
+best_fwd <- lm(train_set$MEDV ~ ., data = train_set)
+best_fwd
+```
+
+
+5. Find the best model under LASSO and Ridge-regularized LS. Use cross-validation to choose the best penalty. You may use `glmnet` or any other library for this task.
+
+```{r}
+grid <- 10^seq(10, -2, length = 100)
+
+#ridge
+
+mod_r <- cv.glmnet(as.matrix(train_set[,-14]), response, lambda = grid)
+mod_r$lambda.min
+
+rstats <- cv.glmnet(as.matrix(train_set[,-14]), response, alpha = 0)
+ridge_lambda <- rstats$lambda.min
+ridge <- glmnet( as.matrix(train_set[,-14]), response, family = "gaussian", alpha = 0, lambda = ridge_lambda)
+
+#lasso
+
+mod_l <- cv.glmnet(as.matrix(train_set[,-14]), response, lambda = grid)
+mod_l$lambda.min
+
+lstats <- cv.glmnet(as.matrix(train_set[,-14]), response, alpha = 1)
+lasso_lambda <- lstats$lambda.min
+
+lasso <- glmnet(as.matrix(train_set[,-14]), response, family = "gaussian", alpha = 1, lambda = lasso_lambda)
+
+```
+
+
+6. Use your 3 best models chose from the last 3 tasks to predict the housing values in your test set and compute the predicted MSE for each. Interpret your results.
+
+```{r}
+MSE_4 <- mean((test_set$MEDV - (predict(best_fwd, test_set, type = "response")))**2)
+MSE_ridge <- mean((test_set$MEDV - (predict(ridge, as.matrix(test_set[,-14]), type = "link")) )**2)
+MSE_lasso <- mean((test_set$MEDV - (predict(lasso, as.matrix(test_set[,-14]), type = "link")) )**2)
+
+MSE_4
+MSE_ridge
+MSE_lasso
+
+```
+
+Thus, the lowest MSE comes from the forward stepwise selection we did in Task 4. This is due to the fact that the least squares fit is most likely already at a low bias, and that when we use ridge, we are increasing the bias for the sake of a much lower variance. since the forward selection method has a lower MSE, then the effect of the bias must outweigh the effect of the variance. On the other hand, lasso performs better than ridge, because it is a feature selection method, so many values that would have otherwise increased bias or variance have been eliminated.
+
+
+
+**BONUS**: Compare your results to the paper referenced before.
+
+
+
+
