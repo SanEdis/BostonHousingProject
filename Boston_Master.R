@@ -61,7 +61,7 @@ sum(is.na(dataset)) #determines number of NA values. Since 0, nothing to omit.
 response <- train_set$MEDV
 
 M_0 <- mean(response) #null model, 0 predictors, and the RSS is simply the mean of the response variables from 1 to 506 observations
-M_0
+return(M_0)
 
 
 
