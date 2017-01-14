@@ -3,6 +3,8 @@
 ## Prepared By : Samba Njie Jr
 ## Completed : 10/16/2016
 
+setwd("/Users/sambamamba/Documents/Cal Fall 2016/Stat 154/BostonHousingProject")
+
 # Libraries ------------------------------------------------------------------------------------------
 
 cat("### Loading libraries... ###" )
@@ -17,7 +19,7 @@ library(glmnet)
 
 cat("### Loading User-Defined Functions... ###" )
 
-
+source()
 
 
 # Reading Data ------------------------------------------------------------------------------------------
@@ -54,7 +56,12 @@ head(corr_matrix[14,])
 
 # Best Subset Selection ---------------------------------------------------------------------------------
 
+sum(is.na(dataset)) #determines number of NA values. Since 0, nothing to omit.
 
+response <- train_set$MEDV
+
+M_0 <- mean(response) #null model, 0 predictors, and the RSS is simply the mean of the response variables from 1 to 506 observations
+M_0
 
 
 

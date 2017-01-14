@@ -54,8 +54,8 @@ library(glmnet)
 
 Read in the `housing.csv` data set:
 ```{r}
-dataset <- read.csv(file = "/Users/sambamamba/Documents/154_files/housing.csv")
-head(dataset) #inspect the columns and rows in the beginning
+dataset <- read.csv(file = "/Users/sambamamba/Documents/Cal Fall 2016/Stat 154/BostonHousingProject/housing.csv")
+dahead(dataset) #inspect the columns and rows in the beginning
 ```
 
 Now let us set up randomly sampled training and test sets, 90% training, 10% testing.
