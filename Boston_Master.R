@@ -63,6 +63,17 @@ response <- train_set$MEDV
 M_0 <- mean(response) #null model, 0 predictors, and the RSS is simply the mean of the response variables from 1 to 506 observations
 print(M_0)
 
+cat("### Splitting training set into predictor and response... ###\n")
+
+p_space <- train_set[,1:13] # data frame of the predictor space (excluding MEDV response)
+response <- train_set$MEDV # vector of response variable MEDV
+
+model <- train_set[1:13] # select the first 13 predictors because this provides us with the highest R-squared via our R-squared assessment above
+d = ncol(model)
+
+cat("### Find subsets with maximal R-squared values ###\n")
+
+M_models <- power_set(p_space, response) # stores M_1,...,M_p sets of models
 
 
 

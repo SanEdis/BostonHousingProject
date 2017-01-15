@@ -233,10 +233,10 @@ best_rss <- function(predictor_space, response) {
 index <- function(vec, value) {#indexes a set
   for (i in 1:length(vec)) {
     if (value == vec[i]) {
-      yes <- i 
+      idx <- i 
     }
   }
-  return(yes)
+  return(idx)
 }
 
 idx_best <- function(predictor_space, response) {#list of indices of each M_k with each value being the index of the subset with the smallest RSS
