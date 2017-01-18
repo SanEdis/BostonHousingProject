@@ -8,6 +8,8 @@
 
 ### subsets: finds the number of possible subsets of any sized set ###
 
+
+
 subsets <- function(p) { 
   # p = ncol(data)
   stopifnot(is.numeric(p))
